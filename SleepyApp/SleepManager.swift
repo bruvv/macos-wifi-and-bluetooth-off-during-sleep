@@ -1,11 +1,17 @@
+
 import Foundation
 import AppKit
+import IOKit.ps
 
 final class SleepManager: ObservableObject {
     private let nc = NSWorkspace.shared.notificationCenter
     private let prefs = UserDefaults.standard
 
     @Published var cachedWiFiInterface: String?
+    @Published var powerSourceLabel: String = "Onbekend"
+    @Published var onACPower: Bool = false
+
+    private var powerPoller: Timer?
 
     private var prevWiFiOn: Bool?
     private var prevBTOn: Bool?
@@ -15,15 +21,9 @@ final class SleepManager: ObservableObject {
     private let kRestoreOnWake = "restoreOnWake"
 
     private let networksetup = "/usr/sbin/networksetup"
-    private let blueutilCandidates = [
-        "/opt/homebrew/bin/blueutil",
-        "/usr/local/bin/blueutil",
-        "/usr/bin/blueutil"
-    ]
 
     private var blueutilPath: String? {
-        if let res = run("/usr/bin/which", ["blueutil"]),
-           res.status == 0 {
+        if let res = run("/usr/bin/which", ["blueutil"]), res.status == 0 {
             let p = res.stdout.trimmingCharacters(in: .whitespacesAndNewlines)
             if FileManager.default.isExecutableFile(atPath: p) { return p }
         }
@@ -31,26 +31,57 @@ final class SleepManager: ObservableObject {
         return fallbacks.first { FileManager.default.isExecutableFile(atPath: $0) }
     }
 
+    // MARK: Power source
+    private func isOnACPower() -> Bool {
+        guard let blob = IOPSCopyPowerSourcesInfo()?.takeRetainedValue(),
+              let typeCF = IOPSGetProvidingPowerSourceType(blob)?.takeUnretainedValue() as String? else {
+            return false
+        }
+        return typeCF == kIOPSACPowerValue
+    }
+
+    /// Human-readable current power source for UI
+    func currentPowerSourceLabel() -> String {
+        isOnACPower() ? "Netstroom" : "Batterij"
+    }
+
     init() {
         nc.addObserver(self, selector: #selector(onWillSleep(_:)), name: NSWorkspace.willSleepNotification, object: nil)
         nc.addObserver(self, selector: #selector(onDidWake(_:)), name: NSWorkspace.didWakeNotification, object: nil)
         cachedWiFiInterface = detectWiFiDevice()
         NSLog("[SleepNetGuard] detected Wi-Fi device: \(cachedWiFiInterface ?? "nil")")
+
+        // Init power source state and start a lightweight poller so the UI stays live
+        self.onACPower = isOnACPower()
+        self.powerSourceLabel = currentPowerSourceLabel()
+        powerPoller = Timer.scheduledTimer(withTimeInterval: 2.0, repeats: true) { [weak self] _ in
+            guard let self else { return }
+            let ac = self.isOnACPower()
+            if ac != self.onACPower { self.onACPower = ac }
+            let label = self.currentPowerSourceLabel()
+            if label != self.powerSourceLabel { self.powerSourceLabel = label }
+        }
     }
 
-    @objc private func onWillSleep(_ note: Notification) {
-        performWillSleepActions()
+    deinit {
+        powerPoller?.invalidate()
     }
 
-    @objc private func onDidWake(_ note: Notification) {
-        performDidWakeActions()
-    }
+    @objc private func onWillSleep(_ note: Notification) { performWillSleepActions() }
+    @objc private func onDidWake(_ note: Notification)  { performDidWakeActions() }
 
-    // Publiek: testknoppen
+    // MARK: Public actions
     func performWillSleepActions(simulated: Bool = false) {
         let disableWiFi = boolPref(kDisableWiFi, default: true)
         let disableBT   = boolPref(kDisableBT,   default: true)
-        NSLog("[SleepNetGuard] will-sleep: disableWiFi=\(disableWiFi) disableBT=\(disableBT) dev=\(cachedWiFiInterface ?? detectWiFiDevice() ?? "en0")")
+        let onAC = isOnACPower()
+        NSLog("[SleepNetGuard] will-sleep: disableWiFi=\(disableWiFi) disableBT=\(disableBT) onAC=\(onAC) dev=\(cachedWiFiInterface ?? detectWiFiDevice() ?? "en0")")
+
+        if onAC {
+            NSLog("[SleepNetGuard] on AC power; skipping Wi-Fi/BT disable")
+            if simulated { print("[Simulated] overslaan: op netstroom") }
+            return
+        }
 
         if disableWiFi {
             prevWiFiOn = isWiFiPoweredOn()
@@ -136,7 +167,7 @@ final class SleepManager: ObservableObject {
         }
     }
 
-    // MARK: Wi-Fi via device
+    // MARK: Wi‑Fi via device
     private func detectWiFiDevice() -> String? {
         guard let out = run(networksetup, ["-listallhardwareports"])?.stdout else { return nil }
         let lines = out.split(separator: "\n").map(String.init)
@@ -200,31 +231,19 @@ final class SleepManager: ObservableObject {
     }
 
     // MARK: Process helper
-    private struct CommandResult {
-        let ok: Bool
-        let stdout: String
-        let stderr: String
-        let status: Int32
-    }
+    private struct CommandResult { let ok: Bool; let stdout: String; let stderr: String; let status: Int32 }
 
     @discardableResult
     private func run(_ launchPath: String, _ args: [String]) -> CommandResult? {
         let p = Process()
         p.launchPath = launchPath
         p.arguments = args
-
-        let outPipe = Pipe()
-        let errPipe = Pipe()
-        p.standardOutput = outPipe
-        p.standardError = errPipe
-
-        do {
-            try p.run()
-        } catch {
+        let outPipe = Pipe(); let errPipe = Pipe()
+        p.standardOutput = outPipe; p.standardError = errPipe
+        do { try p.run() } catch {
             return CommandResult(ok: false, stdout: "", stderr: "\(error)", status: -1)
         }
         p.waitUntilExit()
-
         let out = String(data: outPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         let err = String(data: errPipe.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
         if p.terminationStatus != 0 || !err.isEmpty {

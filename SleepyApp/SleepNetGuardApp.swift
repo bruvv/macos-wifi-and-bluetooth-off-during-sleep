@@ -10,13 +10,11 @@ struct SleepNetGuardApp: App {
 
     init() {
         NSApplication.shared.setActivationPolicy(.prohibited)
-        // Register sane defaults so test-knoppen werken zonder eerst toggles aan te zetten
         UserDefaults.standard.register(defaults: [
             "disableWiFiOnSleep": true,
             "disableBTOnSleep": true,
             "restoreOnWake": true
         ])
-
         if launchAtLogin {
             try? SMAppService.mainApp.register()
         }
@@ -25,11 +23,9 @@ struct SleepNetGuardApp: App {
     var body: some Scene {
         MenuBarExtra("SleepNetGuard", systemImage: "moon.zzz.fill") {
             VStack(alignment: .leading, spacing: 8) {
-                // Hoofd-inhoud uit ContentView
                 ContentView()
                     .environmentObject(sleepManager)
 
-                // Toggle om geavanceerde opties te tonen, mooi gecentreerd
                 HStack {
                     Spacer()
                     if showAdvanced {
@@ -40,16 +36,10 @@ struct SleepNetGuardApp: App {
                     Spacer()
                 }
 
-                // Geavanceerde sectie
                 if showAdvanced {
                     Divider()
-
-                    Button("Diagnose: test Wi-Fi/BT nu") {
-                        sleepManager.diagnoseNow()
-                    }
-
+                    Button("Diagnose: test Wi‑Fi/BT nu") { sleepManager.diagnoseNow() }
                     Divider()
-
                     Toggle("Start bij inloggen", isOn: Binding(
                         get: { launchAtLogin },
                         set: { newValue in
@@ -58,20 +48,13 @@ struct SleepNetGuardApp: App {
                             else { try? SMAppService.mainApp.unregister() }
                         }
                     ))
-
                     Divider()
-
                     HStack(spacing: 12) {
-                        Button("Test: voer slaap-acties nu uit") {
-                            sleepManager.performWillSleepActions(simulated: true)
-                        }
-                        Button("Test: herstel acties nu") {
-                            sleepManager.performDidWakeActions(simulated: true)
-                        }
+                        Button("Test: voer slaap‑acties nu uit") { sleepManager.performWillSleepActions(simulated: true) }
+                        Button("Test: herstel acties nu") { sleepManager.performDidWakeActions(simulated: true) }
                     }
                 }
 
-                // Onderste scheiding en Stop-knop met lucht
                 Divider()
                 HStack {
                     Spacer()

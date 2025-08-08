@@ -8,6 +8,15 @@ struct ContentView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Image(systemName: sleepManager.onACPower ? "bolt.circle" : "battery.100")
+                Text("Voeding: \(sleepManager.powerSourceLabel)")
+            }
+            .font(.footnote)
+            .frame(maxWidth: .infinity, alignment: .leading)
+
+            Divider()
+
             Toggle("Wi‑Fi uitschakelen tijdens slaap", isOn: $disableWiFiOnSleep)
             Toggle("Bluetooth uitschakelen tijdens slaap", isOn: $disableBTOnSleep)
             Toggle("Oude status herstellen bij wakker worden", isOn: $restoreOnWake)
@@ -24,6 +33,6 @@ struct ContentView: View {
             .font(.footnote)
         }
         .padding(12)
-        .frame(width: 320)
+        .frame(width: 340)
     }
 }
