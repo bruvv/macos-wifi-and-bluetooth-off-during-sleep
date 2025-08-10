@@ -1,0 +1,50 @@
+name: Build on Release
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  build:
+    name: Build macOS app
+    runs-on: macos-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (Release)
+        run: |
+          set -euo pipefail
+          xcodebuild \
+            -project SleepyApp.xcodeproj \
+            -scheme SleepyApp \
+            -configuration Release \
+            -sdk macosx \
+            -derivedDataPath build \
+            -destination 'platform=macOS' \
+            clean build
+
+      - name: Package .app
+        run: |
+          set -euo pipefail
+          APP_PATH="build/Build/Products/Release/SleepyApp.app"
+          if [ ! -d "$APP_PATH" ]; then
+            echo "App not found at $APP_PATH"
+            echo "Available products:" && ls -R build/Build/Products || true
+            exit 1
+          fi
+          ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" build/SleepyApp.zip
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SleepyApp.zip
+          path: build/SleepyApp.zip
+
+      - name: Upload asset to release
+        if: github.event_name == 'release' && github.event.action == 'published'
+        uses: softprops/action-gh-release@v2
+        with:
+          files: build/SleepyApp.zip
